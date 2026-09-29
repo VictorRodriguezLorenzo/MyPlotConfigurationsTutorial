@@ -1,0 +1,154 @@
+import os
+import subprocess
+
+from mkShapesRDF.lib.search_files import SearchFiles
+
+# ============================================================
+# FILE DISCOVERY STRUCTURE
+# ============================================================
+
+searchFiles = SearchFiles()
+
+limitFiles = -1
+redirector = ""
+
+def nanoGetSampleFiles(path, name):
+    _files = searchFiles.searchFiles(path, name, redirector=redirector)
+    if limitFiles != -1:
+        _files = _files[:limitFiles]
+    return _files
+
+
+#signalDirectory = '/eos/user/v/victorr/HWWNano/Summer24_150x_nAODv15_Full2024v15/MCl2loose2024v15__MCCorr2024v15__JERFrom23BPix__l2tight'
+signalDirectory = '/eos/user/e/emunozri/ttDM/HWWNano/Summer24_150x_nAODv15_Full2024v15/MCl2loose2024v15__MCCorr2024v15__JERFrom23BPix__l2tight'
+
+mcDirectory = '/eos/cms/store/group/phys_higgs/cmshww/amassiro/HWWNano/Summer24_150x_nAODv15_Full2024v15/MCl2loose2024v15__MCCorr2024v15__JERFrom23BPix__l2tight'
+
+mPhi = ['10','50','100','150','200','250','300','350','400','500','600','700','800','1000']
+
+files_ttDM_temp = {}
+
+# tt+DM dilepton scalar
+for phi in mPhi:
+    files_ttDM_temp[f'TTto2LDMsimpSpin0_s_mphi-{phi}'] = {
+        'names': nanoGetSampleFiles(signalDirectory, f'TTto2LDMsimpSpin0_s_mphi-{phi}') + nanoGetSampleFiles(signalDirectory, f'TTto2LDMsimpSpin0_s_mphi-{phi}_ext1')
+    }
+
+# tt+DM dilepton pseudoscalar
+for phi in mPhi:
+    files_ttDM_temp[f'TTto2LDMsimpSpin0_ps_mphi-{phi}'] = {
+        'names': nanoGetSampleFiles(signalDirectory, f'TTto2LDMsimpSpin0_ps_mphi-{phi}') + nanoGetSampleFiles(signalDirectory, f'TTto2LDMsimpSpin0_ps_mphi-{phi}_ext1')
+    }
+
+# t+DM tW-channel dilepton pseudoscalar
+for phi in mPhi:
+    files_ttDM_temp[f'TWto2LDMsimpSpin0_ps_mphi-{phi}'] = {
+        'names': nanoGetSampleFiles(signalDirectory, f'TWto2LDMsimpSpin0_ps_mphi-{phi}')
+    }
+
+# t+DM tW-channel dilepton scalar
+for phi in mPhi:
+    files_ttDM_temp[f'TWto2LDMsimpSpin0_s_mphi-{phi}'] = {
+        'names': nanoGetSampleFiles(signalDirectory, f'TWto2LDMsimpSpin0_s_mphi-{phi}')
+    }
+
+files_ttDM = files_ttDM_temp.copy()
+for key, value in list(files_ttDM_temp.items()):
+    if isinstance(value["names"], list) and len(value["names"]) == 0:
+        del files_ttDM[key]
+
+files_top = nanoGetSampleFiles(mcDirectory, 'TTTo2L2Nu') + \
+            nanoGetSampleFiles(mcDirectory, 'TTToSemiLeptonic') + \
+            nanoGetSampleFiles(mcDirectory, 'ST_t-channel_top') + \
+            nanoGetSampleFiles(mcDirectory, 'ST_t-channel_antitop') + \
+            nanoGetSampleFiles(mcDirectory, 'ST_s-channel_plus') + \
+            nanoGetSampleFiles(mcDirectory, 'ST_s-channel_minus') + \
+            nanoGetSampleFiles(mcDirectory, 'TWminusto2L2Nu') + \
+            nanoGetSampleFiles(mcDirectory, 'TbarWplusto2L2Nu') + \
+            nanoGetSampleFiles(mcDirectory, 'ST_tW_top') + \
+            nanoGetSampleFiles(mcDirectory, 'ST_tW_antitop')
+
+files_ttZ = nanoGetSampleFiles(mcDirectory, 'TTNuNu') \
+        + nanoGetSampleFiles(mcDirectory, 'TTLL_MLL-4to50') \
+        + nanoGetSampleFiles(mcDirectory, 'TTLL_MLL-50') \
+        + nanoGetSampleFiles(mcDirectory, 'TTZ-ZtoQQ')
+
+files_ttW = nanoGetSampleFiles(mcDirectory, 'TTLNu') \
+         + nanoGetSampleFiles(mcDirectory, 'TTW-WtoQQ')
+
+files_ttH = nanoGetSampleFiles(mcDirectory, 'TTHtoNon2B') \
+        + nanoGetSampleFiles(mcDirectory, 'TTHto2B')
+
+#files_DY = nanoGetSampleFiles(mcDirectory, 'DYto2E-2Jets_MLL-50') + \
+#           nanoGetSampleFiles(mcDirectory, 'DYto2Mu-2Jets_MLL-50') + \
+#           nanoGetSampleFiles(mcDirectory, 'DYto2Tau-2Jets_MLL-50') + \
+#           nanoGetSampleFiles(mcDirectory, 'DYto2E-2Jets_MLL-10to50') + \
+#           nanoGetSampleFiles(mcDirectory, 'DYto2Mu-2Jets_MLL-10to50') + \
+#           nanoGetSampleFiles(mcDirectory, 'DYto2Tau-2Jets_MLL-10to50') 
+
+files_BKG = files_top + files_ttZ + files_ttW + files_ttH  #+ files_DY
+
+# ============================================================
+# FLATTEN LIST
+# ============================================================
+
+all_files = []
+
+for key, val in files_ttDM.items():
+    all_files.extend(val["names"])
+
+all_files.extend(files_BKG)
+
+print("Submitting jobs for", len(all_files), "files")
+
+# ============================================================
+# CREATE WRAPPER SCRIPT
+# ============================================================
+
+os.makedirs("condor_logs", exist_ok=True)
+
+with open("run_snapshot.sh", "w") as f:
+    f.write("""#!/bin/bash
+source /afs/cern.ch/user/v/victorr/private/mkShapesRDF/start.sh
+export X509_USER_PROXY=$HOME/.proxy
+
+time python prepare_training_snapshots.py "$1"
+""")
+
+os.chmod("run_snapshot.sh", 0o755)
+
+# ============================================================
+# CREATE SUBMIT FILE
+# ============================================================
+
+snapshot_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prepare_training_snapshots.py")
+
+with open("submit_snapshot.sub", "w") as f:
+    f.write(f"""
+universe = vanilla
+executable  = run_snapshot.sh
+arguments   = $(inputfile)
+
+should_transfer_files = YES
+transfer_input_files = {snapshot_script}
+
+output      = condor_logs/job_$(Cluster)_$(Process).out
+error       = condor_logs/job_$(Cluster)_$(Process).err
+log         = condor_logs/job_$(Cluster).log
+
+requirements = (OpSysAndVer =?= "AlmaLinux9")
++JobFlavour = "nextweek"
+
+queue inputfile from (
+""")
+
+    for file in all_files:
+        f.write(file + "\n")
+
+    f.write(")\n")
+
+# ============================================================
+# SUBMIT
+# ============================================================
+
+subprocess.run(["condor_submit", "submit_snapshot.sub"])
